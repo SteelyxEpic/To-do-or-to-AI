@@ -1,7 +1,29 @@
-from google import genai
+import os
 from pydantic import BaseModel
 import time
 from datetime import date
+from groq import Groq
+from pydantic import BaseModel, ValidationError
+import json
+
+todolist = {}
+
+
+api_key = os.environ.get("GROQ_API_KEY")
+if not api_key:
+    api_key = "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"
+
+client = Groq(api_key=api_key)
+def get_all_keys(d: dict):
+    keys = []
+    for key, value in d.items():
+        keys.append(key)
+        for val in value:
+            if isinstance(val, dict):
+                temp = get_all_keys(val)
+                for i in temp:
+                    keys.append(key + "/" + i)
+    return keys
 
 def inputs(string:str = ""):
     for x in range(0, len(string)):
@@ -33,7 +55,7 @@ class struture (BaseModel):
     DueDate: str
     Time: str
     Sort: str
-client = genai.Client(api_key="AIzaSyCRJ3taHFP_71x24IBnn4WtpoGUaVRdHfo")
+client = Groq(api_key=api_key)
 text = ""
 
 
@@ -41,24 +63,51 @@ prints("System ready awaiting input")
 while True:
         text = inputs("Hi! I'm your Todo list assistant. What would you like to do today? You can ask me to add, remove, or view your tasks.")
 
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents="You are a todo list sorter and today's date is " + str(date.today()) + ", a person has added a task with this description: " + text + " Please return a JSON array of objects with the following fields: Todo, Title, DueDate(in the format of YYYY-MM-DD), Time(in the format of HH:MM), Sort(The sort can be attributed like 'workrelated/jannet'). Each object should represent a task. If the user input does not contain any tasks, return an empty array.",
-            config={
-                "response_mime_type": "application/json",
-                "response_schema": list[struture],
-            },
+        response = client.chat.completions.create(
+            model="openai/gpt-oss-20b",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"You are a todo list sorter. Today's date is {date.today()}."
+                        " Extract the task details from the user's text and output a VALID JSON object matching this schema exactly:\n"
+                        '{"Todo": "string", "Title": "string", "DueDate": "YYYY-MM-DD", "Time": "HH:MM", "Sort": "category/subcategory"}\n'
+                        f"The 'Sort' field should be a string that represents the category and subcategory of the task, separated by a forward slash. If there is no subcategory, just provide the category. It can also have multiple subcategories, separated by forward slashes. Currently, the categories are: {str(get_all_keys(todolist))}, You can create new categories if you think it's necessary.\n"
+                        " Do not return any pleasantries, introduction, or conversational filler. Return ONLY the raw JSON object."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Extract task details from: '{text}'",
+                },
+            ],
+            response_format={"type": "json_object"},  # Forces Groq to output raw JSON
         )
 
-        my_recipes: list[struture] = response.parsed
-        print(my_recipes[0])
-       
-        sorting = my_recipes[0].Sort.split("/")
-        print(sorting)
-        
-        time.sleep(0.1)
-        
-                
-        print(my_recipes[0]) 
-        prints("awaiting input")
+        # 1. Grab the raw text string from the response
+        raw_json_string = response.choices[0].message.content
 
+        # 2. Parse the string into a standard Python dictionary
+        parsed_dict = json.loads(raw_json_string)
+
+        task_data = struture(**parsed_dict)
+
+        print(task_data)
+       
+        sorting = task_data.Sort.split("/")
+        length = len(sorting)
+        temp = {"Todo": task_data.Todo, "Title": task_data.Title, "DueDate": task_data.DueDate, "Time": task_data.Time}
+        for i in get_all_keys(todolist):
+            if task_data.Sort == i:
+                todolist[sorting[0]][sorting[1]].append(temp)
+                break
+        else:
+            templist = [temp]
+            for i in reversed(sorting[1:]):
+                templist = {i: templist}
+            todolist[sorting[0]] = templist
+
+        prints("Task added successfully! Here is your updated todo list:")
+        print(todolist)
+
+        time.sleep(0.1)
