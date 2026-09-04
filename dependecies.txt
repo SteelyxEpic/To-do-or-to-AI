@@ -1,0 +1,5 @@
+dependecies
+python-telegram-bot
+Groq
+pydantic
+python-dotenv

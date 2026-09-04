@@ -4,22 +4,36 @@ import time
 from datetime import date
 from groq import Groq
 import json
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from dotenv import load_dotenv
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+    ConversationHandler,
+    CallbackQueryHandler,
+)
 
+load_dotenv()
 
 todolist = {}
 all_keys = []
 
-api_key = os.environ.get("GROQ_API_KEY")
-if not api_key:
-    api_key = "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"
+api_key = os.getenv("GROQ_API_KEY")
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-TOKEN = "8985295869:AAH8YG6WlvJiUbbOkyLAPsq2ulET8LWu2Pg"
 
 client = Groq(api_key=api_key)
 
-
+def getkeys(index: int):
+    temp = set()
+    for i in all_keys:
+        keys = i.split("/")
+        if len(keys) > index:
+            temp.add(keys[index])
+    return temp
 
 
 class Structure (BaseModel):
@@ -43,6 +57,7 @@ def task(text:str):
                     " Extract the task details from the user's text and output a VALID JSON object matching this schema exactly:\n"
                     '{"Todo": "string", "Title": "string", "DueDate": "YYYY-MM-DD", "Time": "HH:MM", "Sort": "category/subcategory"}\n'
                     f"The 'Sort' field should be a string that represents the category and subcategory of the task, separated by a forward slash. If there is no subcategory, just provide the category. It can also have multiple subcategories, separated by forward slashes. Currently, the categories are: {str(all_keys)}, You may create new categories but only if you think it's necessary.\n"
+                    "If you think the description does not give a time, assume it as '00:00'. If you think the description does not give a due date, please write 'TBD'"
                     " Do not return any pleasantries, introduction, or conversational filler. Return ONLY the raw JSON object."
                 ),
             },
@@ -80,7 +95,7 @@ def task(text:str):
 
     print("Task added successfully! Here is your updated todo list:")
     print(todolist)
-    return todolist
+    return {title: temp}
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Hello! I am your Python bot. How can I help you today?")
@@ -91,19 +106,42 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def categories_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Available categories: {str(all_keys)}")
 
+async def get_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [
+            InlineKeyboardButton("Leave", callback_data="leave"),
+            InlineKeyboardButton("Get latest task", callback_data="get_task_latest"),
+        ]
+    ]
+    keyboard[0].extend([InlineKeyboardButton(category, callback_data=f"0get_task_{category}") for category in getkeys(0)])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Choose an option:", reply_markup=reply_markup)
+
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args:
-        full_text = " ".join(context.args)
-        task(full_text)
-        await update.message.reply_text("Done!" + str(todolist))
-    else:
-        await update.message.reply_text("Please provide the details for your new task and call the function again.")
+    await update.message.reply_text("Please provide the details for your new task or if you want to leave use /quit.")
+    return 1 
+
+
+async def leave_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("You have left the conversation.")
+    return ConversationHandler.END
+
+async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer() 
+    
+    
+    if query.data == "leave":
+        await query.edit_message_text(text="leaving....")
+    elif "get_task_" in query.data:
+        await query.edit_message_text(text="finding task....")
+
 
 # 2. Define a message handler (Processes regular text messages)
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Echoes back the text the user sent."""
     user_text = update.message.text
-    await update.message.reply_text(f"You said: '{user_text}'")
+    result = task(user_text)
+    await update.message.reply_text(f"Done! Added task with title '{list(result.keys())[0]}'")
 
 print("System ready awaiting input")
 def main():
@@ -116,13 +154,21 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("categories", categories_command))
-    app.add_handler(CommandHandler("add", add_command))
+    app.add_handler(CommandHandler("get", get_task_command))
+    app.add_handler(CallbackQueryHandler(button_click))
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("add", add_command)],
+        states={
+            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)],
+        },
+        fallbacks=[CommandHandler("leave", leave_command)],
+    )
+    app.add_handler(conv_handler)
 
-    # Register Message Handler (Filters for normal text messages, ignores commands)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    #app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Tell the bot to continuously check for updates from Telegram
-    print("Bot is polling...")
+
+    print("Running!~")
     app.run_polling()
 
 if __name__ == "__main__":
