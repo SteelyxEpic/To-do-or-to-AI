@@ -41,7 +41,8 @@ def load_user(user_id):
 
     return {
         "todolist": {},
-        "all_keys": []
+        "all_keys": [],
+        "expired": {},
     }
 
 def save_user(user_id, data):
@@ -89,7 +90,7 @@ def task(text:str, id:int):
                     " Extract the task details from the user's text and output a VALID JSON object matching this schema exactly:\n"
                     '{"Todo": "string", "Title": "string", "DueDate": "YYYY-MM-DD", "Time": "HH:MM", "Sort": "category/subcategory", "done": "boolean"}\n'
                     f"The 'Sort' field should be a string that represents the category and subcategory of the task, separated by a forward slash. If there is no subcategory, just provide the category. It can also have multiple subcategories, separated by forward slashes. Currently, the categories are: {str(keydata['all_keys'])}, You may create new categories but only if you think it's necessary.\n"
-                    "If you think the description does not give a time, assume it as '00:00'. If you think the description does not give a due date, please write 'TBD'"
+                    "If you think the description does not enough information to determine the time, assume it as '00:00'. If you think the description does not give a due date, please write 'TBD'"
                     " Do not return any pleasantries, introduction, or conversational filler. Return ONLY the raw JSON object."
                 ),
             },
@@ -144,13 +145,13 @@ async def categories_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def category_exists(index: str, chat_id: int):
     keydata = load_user(chat_id)
     if index == "":
-        return ([InlineKeyboardButton(category, callback_data=f"get_task_{category}")] for category in list(keydata["todolist"].keys()))
+        return [[InlineKeyboardButton(category, callback_data=f"get_task_{category}")] for category in list(keydata["todolist"].keys())]
     tempindex = index
     index = index.split("/")
     temp = keydata["todolist"]
     for i in index:
         temp = temp.get(i, {})
-    return ([InlineKeyboardButton(category, callback_data=f"get_task_{tempindex}/{category}")] if not temp[category].get("done", False) and not temp[category].get("expired", False) else [] for category in list(temp.keys()))
+    return [[InlineKeyboardButton(category, callback_data=f"get_task_{tempindex}/{category}")] if not temp[category].get("done", False) and not temp[category].get("expired", False) else [] for category in list(temp.keys())]
 
 async def get_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -158,7 +159,7 @@ async def get_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Return", callback_data="return"),
             
         ],
-        [InlineKeyboardButton("Get latest task", callback_data="get_task_latest")]
+        [InlineKeyboardButton("Get upcoming task", callback_data="get_task_latest")]
     ]
     keyboard.extend(category_exists("", update.effective_chat.id))
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -216,7 +217,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 InlineKeyboardButton("Return", callback_data="return"),
                 
             ],
-            [InlineKeyboardButton("Get latest task", callback_data="get_task_latest")]
+            [InlineKeyboardButton("Get upcoming task", callback_data="get_task_latest")]
         ]
         text = ""
         curent = query.data.split("get_task_")[1]
@@ -231,14 +232,14 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                         InlineKeyboardButton("Return", callback_data="return"),
                         
                     ],
-                    [InlineKeyboardButton("Get latest task", callback_data="get_task_latest")]
+                    [InlineKeyboardButton("Get upcoming task", callback_data="get_task_latest")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.edit_message_text(text=text, reply_markup=reply_markup)
                 return
             latest_task = min(all_tasks, key=lambda x: hoursremain(x[1]))
             temp = latest_task[1]
-            tasks = f"\n{index[-1]}: {temp["Todo"]}"
+            tasks = f"\n{latest_task[0]}: {temp["Todo"]}"
             text=f"Selected task:{tasks}\nDue Date: {temp['DueDate']} Time: {temp['Time']}\nHours remaining: {hoursremain(temp)}"
             keyboard.append([InlineKeyboardButton("Mark as done", callback_data=f"done_task{curent}")])
         else:
@@ -269,10 +270,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 print("System ready awaiting input")
 
+def get_all_user_ids():
+    ids = []
 
+    for file in os.listdir("data"):
+        if file.endswith(".json"):
+            ids.append(int(file[:-5]))
+
+    return ids
 
 async def check(context):
-    for i in chat_ids:
+    for i in get_all_user_ids():
         user = load_user(i)
         change = False
         all_tasks = get_all_tasks(user["todolist"])
@@ -285,6 +293,7 @@ async def check(context):
                 chat_id=i,
                 text=f"The task '{task[0]}' has expired!"
                 )
+                user["expired"][task[0]] = task[1]
         save_user(i, user) if change else None
             
 
