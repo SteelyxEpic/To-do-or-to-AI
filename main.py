@@ -129,7 +129,8 @@ def task(text:str, id:int):
     return {title: temp}
 
 async def get_expired_tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hello! I am your Python bot. How can I help you today?")
+    expired_tasks = load_user(update.effective_chat.id).get("expired", {})
+    await update.message.reply_text(f"Expired tasks: {expired_tasks if expired_tasks else 'No expired tasks.'}")
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_ids.add(update.effective_chat.id)
