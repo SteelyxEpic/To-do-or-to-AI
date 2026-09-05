@@ -1,4 +1,6 @@
-It's my first python AI bot! And also my first telegram bot too!~ It's a pretty cool little bot that you (yes YOU!!!) can try out right now using this link: t.me/TyosTodoListAIbot.
+It's my first python AI bot! And also my first telegram bot too!~ It's a pretty cool little bot that you (yes YOU!!!) can try out right now using this link: 
+
+www.t.me/TyosTodoListAIbot
 
 Or you can build it yourself by downloading this repo and installing the dependencies listed in dependecies.txt (I know I misspelt it ok ;-;)
 
