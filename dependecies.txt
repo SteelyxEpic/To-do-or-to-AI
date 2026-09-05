@@ -3,3 +3,4 @@ python-telegram-bot
 Groq
 pydantic
 python-dotenv
+"python-telegram-bot[job-queue]" --upgrade
