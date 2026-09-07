@@ -32,7 +32,7 @@ client = Groq(api_key=api_key)
 import json
 import os
 
-def load_user(user_id):
+def load_user(user_id): 
     file = f"data/{user_id}.json"
 
     if os.path.exists(file):
@@ -238,7 +238,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.edit_message_text(text=text, reply_markup=reply_markup)
                 return
-            latest_task = min(all_tasks, key=lambda x: hoursremain(x[1]))
+            latest_task = min(all_tasks, key=lambda x: hoursremain(x[1]) if hoursremain(x[1]) >= 0 else float('inf'))
             temp = latest_task[1]
             tasks = f"\n{latest_task[0]}: {temp["Todo"]}"
             text=f"Selected task:{tasks}\nDue Date: {temp['DueDate']} Time: {temp['Time']}\nHours remaining: {hoursremain(temp)}"
