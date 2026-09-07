@@ -69,6 +69,15 @@ def get_all_tasks(data):
                 tasks.append((key, value))
             else:
                 tasks.extend(get_all_tasks(value))
+def get_all_tasks_with_location(data, location=""):
+    tasks = []
+    for key, value in data.items():
+        current_location = f"{location}/{key}" if location else key
+        if isinstance(value, dict): 
+            if "Todo" in value:
+                tasks.append((current_location, value))
+            else:
+                tasks.extend(get_all_tasks_with_location(value, current_location))
     return tasks
 def hoursremain(task):
     if task.get("DueDate", "") == "TBD":
@@ -225,7 +234,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         if curent == "latest":
             keydata = load_user(update.effective_chat.id)
-            all_tasks = get_all_tasks(keydata["todolist"])
+            all_tasks = get_all_tasks_with_location(keydata["todolist"])
             if not all_tasks:
                 text = "No tasks available."
                 keyboard = [
@@ -240,7 +249,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 return
             latest_task = min(all_tasks, key=lambda x: hoursremain(x[1]) if hoursremain(x[1]) >= 0 else float('inf'))
             temp = latest_task[1]
-            tasks = f"\n{latest_task[0]}: {temp["Todo"]}"
+            tasks = f"\n{latest_task[0].split('/')[-1]}: {temp["Todo"]}"
             text=f"Selected task:{tasks}\nDue Date: {temp['DueDate']} Time: {temp['Time']}\nHours remaining: {hoursremain(temp)}"
             keyboard.append([InlineKeyboardButton("Mark as done", callback_data=f"done_task{curent}")])
         else:
@@ -287,7 +296,7 @@ async def check(context):
         all_tasks = get_all_tasks(user["todolist"])
         for task in all_tasks:
             task_date = hoursremain(task[1])
-            if task_date < 0 and not task[1].get("expired", False):
+            if task_date < 0 and not task[1].get("expired", False) and not task[1].get("done", False):
                 task[1]["expired"] = True
                 change = True
                 await context.application.bot.send_message(
