@@ -18,6 +18,8 @@ The current commands are:
 
 /get - to see all of your current tasks and to also mark them as done
 
+/get_done - to see all of your done tasks
+
 /categories - to see all the current categories and subcategories available
 
 /expire - to see all expired tasks

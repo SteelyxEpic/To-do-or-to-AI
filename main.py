@@ -43,6 +43,7 @@ def load_user(user_id):
         "todolist": {},
         "all_keys": [],
         "expired": {},
+        "done": {},
     }
 
 def save_user(user_id, data):
@@ -137,16 +138,38 @@ def task(text:str, id:int):
     save_user(id, keydata)
     return {title: temp}
 
+async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keydata = load_user(update.effective_chat.id)
+    all_tasks = get_all_tasks_with_location(keydata["todolist"])
+    if not all_tasks:
+        await update.message.reply_text("No tasks available to delete.")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton(f"{task[0].split('/')[-1]}: {task[1]['Todo']}", callback_data=f"delete_{task[0]}")]
+        for task in all_tasks
+    ]
+    keyboard.append([InlineKeyboardButton("Delete All", callback_data="delete_all")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Select a task to delete:", reply_markup=reply_markup)
+
 async def get_expired_tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expired_tasks = load_user(update.effective_chat.id).get("expired", {})
     await update.message.reply_text(f"Expired tasks: {expired_tasks if expired_tasks else 'No expired tasks.'}")
+
+async def get_done_tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    done_tasks = load_user(update.effective_chat.id).get("done", {})
+    temp = "Done tasks:\n" if done_tasks else "No done tasks."
+    for i, task in done_tasks.items():
+        temp += f"Task: {i}\nDetails: {task['Todo']}\n\n"
+    await update.message.reply_text(temp)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_ids.add(update.effective_chat.id)
     await update.message.reply_text("To do list bot started! Use /help to see available commands.")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("/add to add a task, /categories to see all categories, /help to see this message again!")
+    await update.message.reply_text("/add to add a task, /categories to see all categories, /expired to see expired tasks, /get to find all non expired tasks, /get_done to see done tasks, /help to see this message again!")
 
 async def categories_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keydata = load_user(update.effective_chat.id)
@@ -201,14 +224,35 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         keyboard.extend(category_exists("", update.effective_chat.id))
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(text="Choose an option:", reply_markup=reply_markup)
+    elif "delete_" in query.data:
+        curent = query.data.split("delete_")[1]
+        if curent == "all":
+            keydata = load_user(update.effective_chat.id)
+            keydata["todolist"] = {}
+            save_user(update.effective_chat.id, keydata)
+            text = "All tasks have been deleted."
+        else:
+            index = curent.split("/")
+            keydata = load_user(update.effective_chat.id)
+            temp = keydata["todolist"]
+            for i in index[:-1]:
+                temp = temp.get(i, {})
+            if index[-1] in temp:
+                del temp[index[-1]]
+                text = f"Task '{index[-1]}' has been deleted."
+            else:
+                text = f"Task '{index[-1]}' not found."
+        save_user(update.effective_chat.id, keydata)
+        await query.edit_message_text(text=text)
     elif "done_task" in query.data:
         curent = query.data.split("done_task")[1]
         index = curent.split("/")
         keydata = load_user(update.effective_chat.id)
         temp = keydata["todolist"]
-        for i in index:
-            temp = temp.get(i, {})
-        temp["done"] = True
+        for i in range(len(index) - 1):
+            temp = temp.get(index[i], {})
+        keydata["done"][curent] = temp[index[-1]]
+        temp = temp.pop(index[-1], None)
         text = f"Task marked as done: {index[-1]}"
         keyboard = [
             [
@@ -251,7 +295,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             temp = latest_task[1]
             tasks = f"\n{latest_task[0].split('/')[-1]}: {temp["Todo"]}"
             text=f"Selected task:{tasks}\nDue Date: {temp['DueDate']} Time: {temp['Time']}\nHours remaining: {hoursremain(temp)}"
-            keyboard.append([InlineKeyboardButton("Mark as done", callback_data=f"done_task{curent}")])
+            keyboard.append([InlineKeyboardButton("Mark as done", callback_data=f"done_task{latest_task[0]}")])
         else:
         
             index = curent.split("/")
@@ -293,17 +337,21 @@ async def check(context):
     for i in get_all_user_ids():
         user = load_user(i)
         change = False
-        all_tasks = get_all_tasks(user["todolist"])
+        all_tasks = get_all_tasks_with_location(user["todolist"])
         for task in all_tasks:
+            temp = task[0].split('/')
             task_date = hoursremain(task[1])
-            if task_date < 0 and not task[1].get("expired", False) and not task[1].get("done", False):
-                task[1]["expired"] = True
+            if task_date < 0:
+                for i in range(len(temp)):
+                    if i == len(temp) - 1:
+                        user["todolist"] = user["todolist"].pop(temp[i], None)
+                    else:
+                        user["todolist"][temp[i]] = user["todolist"].get(temp[i], {})
                 change = True
                 await context.application.bot.send_message(
                 chat_id=i,
-                text=f"The task '{task[0]}' has expired!"
+                text=f"The task '{temp[-1]}' has expired!"
                 )
-                user["expired"][task[0]] = task[1]
         save_user(i, user) if change else None
             
 
@@ -324,7 +372,9 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("categories", categories_command))
     app.add_handler(CommandHandler("get", get_task_command))
+    app.add_handler(CommandHandler("get_done", get_done_tasks_command))
     app.add_handler(CommandHandler("expire", get_expired_tasks_command))
+    app.add_handler(CommandHandler("delete", delete_command))
     app.add_handler(CallbackQueryHandler(button_click))
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("add", add_command)],
