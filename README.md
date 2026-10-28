@@ -1,3 +1,10 @@
+Tyo's AI ToDo List Bot!~
+
+A bot that helps you structure your tasks with AI!~
+
+![alt text](image.png)
+![alt text](image-1.png)
+
 It's my ~~first python~~ First Slack AI bot!(huh? Telegram? I don't know what you're talking about) And also my second slack bot too!~ It's a pretty cool little bot that you (yes YOU!!!) can try out here:
 
 https://app.slack.com/client/E09V59WQY1E/C0P5NE354 (if you are a hack clubber)
@@ -27,5 +34,7 @@ The current commands are:
 
 
 Now Grok is sometimes wrong so this is more a proof of concept than anything!~ But I still think it's cool!~
+
+
 
 That's all cya!~
