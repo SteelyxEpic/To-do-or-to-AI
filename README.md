@@ -1,8 +1,9 @@
-It's my first python AI bot! And also my first telegram bot too!~ It's a pretty cool little bot that you (yes YOU!!!) can try out right now using this link: 
+It's my ~~first python~~ First Slack AI bot!(huh? Telegram? I don't know what you're talking about) And also my second slack bot too!~ It's a pretty cool little bot that you (yes YOU!!!) can try out here:
 
-www.t.me/TyosTodoListAIbot
+https://app.slack.com/client/E09V59WQY1E/C0P5NE354 (if you are a hack clubber)
+OR install it 
+https://slack.com/oauth/v2/authorize?client_id=2210535565.11773060916551&scope=calls:write,chat:write,commands,app_mentions:read,channels:history&user_scope=
 
-Or you can build it yourself by downloading this repo and installing the dependencies listed in dependecies.txt (I know I misspelt it ok ;-;)
 
 The current AI is using groq but before that it was gemini. The change was caused by the fact that gemini has a limited amount of responses per day (like 20 per day is not enough for me ;-;)
 
@@ -10,16 +11,21 @@ This bot will help you in making a simple todolist! It will alert you if your ta
 
 The current commands are:
 
-/start - to start the bot
+/tyo-add [task] - to add new tasks into the todolist!
 
-/add - to add new tasks into the todolist
+/tyo-get - to see all of your current tasks and to also mark them as done
 
-/leave - to leave the adding phase 
+/tyo-get-done - to see all of your done tasks!~
 
-/get - to see all of your current tasks and to also mark them as done
+/tyo-categories - to see all the current categories and subcategories available
 
-/get_done - to see all of your done tasks
+/tyo-expire - to see all expired tasks!~
 
-/categories - to see all the current categories and subcategories available
+/tyo-help - to see the commands you can do! (well if you are reading this then you would already know the commands tho :p)
 
-/expire - to see all expired tasks
+/tyo-delete - delete a task foreverrr!~ 
+
+
+Now Grok is sometimes wrong so this is more a proof of concept than anything!~ But I still think it's cool!~
+
+That's all cya!~
