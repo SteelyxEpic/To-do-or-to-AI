@@ -3,4 +3,5 @@ python-telegram-bot
 Groq
 pydantic
 python-dotenv
+slack_bolt
 "python-telegram-bot[job-queue]" --upgrade

@@ -1,6 +1,10 @@
-"""Telegram to-do bot that uses an LLM (via Groq) to turn free text into tasks.
+"""Slack to-do bot that uses an LLM (via Groq) to turn free text into tasks.
 
-Tasks are stored per user in data/<chat_id>.json as a tree:
+Everything is driven by one slash command, /todo:
+    /todo add <task description>
+    /todo get | get_done | expired | categories | delete | help
+
+Tasks are stored per user in data/<slack_user_id>.json as a tree:
     todolist -> category -> subcategory -> ... -> {task title: task entry}
 A task entry is any dict containing the key "Todo".
 """
@@ -8,34 +12,40 @@ A task entry is any dict containing the key "Todo".
 import datetime
 import json
 import os
+import re
+import threading
+import time
 from datetime import date
 
 from dotenv import load_dotenv
 from groq import Groq
 from pydantic import BaseModel
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-)
+from slack_bolt import App
+from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+SLACK_API_KEY = os.getenv("SLACK_API_KEY")      # Bot token (xoxb-...)
+SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")  # App-level token (xapp-...), needed for Socket Mode
 
 DATA_DIR = "data"
 LLM_MODEL = "openai/gpt-oss-20b"
 EXPIRY_CHECK_INTERVAL_SECONDS = 600  # every 10 minutes
+MAX_BUTTONS = 45  # Slack allows at most 50 blocks per message
 
-ADD_TASK_STATE = 1  # ConversationHandler state while waiting for task text
+HELP_TEXT = (
+    "`/todo add <task>` add a task\n"
+    "`/todo get` browse your tasks\n"
+    "`/todo categories` see all categories\n"
+    "`/todo expired` see expired tasks\n"
+    "`/todo get_done` see done tasks\n"
+    "`/todo delete` delete tasks\n"
+    "`/todo help` show this message"
+)
 
 client = Groq(api_key=GROQ_API_KEY)
+app = App(token=SLACK_API_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +71,7 @@ def save_user(user_id, data):
 def get_all_user_ids():
     if not os.path.isdir(DATA_DIR):
         return []
-    return [int(name[:-5]) for name in os.listdir(DATA_DIR) if name.endswith(".json")]
+    return [name[:-5] for name in os.listdir(DATA_DIR) if name.endswith(".json")]
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +144,9 @@ def hours_remaining(task):
 
 def format_task(title, task):
     return (
-        f"Selected task:\n{title}: {task['Todo']}\n"
+        f"*Selected task:*\n{title}: {task['Todo']}\n"
         f"Due Date: {task['DueDate']} Time: {task['Time']}\n"
-        f"Hours remaining: {hours_remaining(task)}"
+        f"Hours remaining: {hours_remaining(task):.1f}"
     )
 
 
@@ -200,14 +210,36 @@ def add_task(text, user_id):
 
 
 # ---------------------------------------------------------------------------
-# Keyboards
+# Message / button building (Slack Block Kit)
 # ---------------------------------------------------------------------------
+
+def button(label, action_id, value=""):
+    """One button, in its own 'actions' block so it sits on its own row."""
+    return {
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": label[:75]},
+                "action_id": action_id,
+                "value": value or "-",
+            }
+        ],
+    }
+
+
+def show(respond, text, buttons=()):
+    """Send (or replace) a message made of some text plus button rows."""
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
+    blocks.extend(list(buttons)[:MAX_BUTTONS])
+    respond(text=text, blocks=blocks, replace_original=True)
+
 
 def navigation_buttons():
     """The 'Return' and 'Get upcoming task' rows shown on most menus."""
     return [
-        [InlineKeyboardButton("Return", callback_data="return")],
-        [InlineKeyboardButton("Get upcoming task", callback_data="get_task_latest")],
+        button("Return", "return"),
+        button("Get upcoming task", "upcoming"),
     ]
 
 
@@ -221,140 +253,113 @@ def category_buttons(path, user_id):
         if child.get("done") or child.get("expired"):
             continue
         child_path = f"{path}/{name}" if path else name
-        buttons.append([InlineKeyboardButton(name, callback_data=f"get_task_{child_path}")])
+        buttons.append(button(name, f"get_task:{child_path}", child_path))
     return buttons
 
 
-def main_menu(user_id):
-    return InlineKeyboardMarkup(navigation_buttons() + category_buttons("", user_id))
+def main_menu_buttons(user_id):
+    return navigation_buttons() + category_buttons("", user_id)
 
 
 # ---------------------------------------------------------------------------
-# Command handlers
+# /todo subcommands
 # ---------------------------------------------------------------------------
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("To do list bot started! Use /help to see available commands.")
+def cmd_help(user_id, args, respond):
+    respond(HELP_TEXT)
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "/add to add a task, /categories to see all categories, "
-        "/expire to see expired tasks, /get to find all non expired tasks, "
-        "/get_done to see done tasks, /delete to delete tasks, "
-        "/help to see this message again!"
-    )
-
-
-async def categories_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = load_user(update.effective_chat.id)
-    await update.message.reply_text(f"Available categories: {user['all_keys']}")
-
-
-async def get_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Choose an option:", reply_markup=main_menu(update.effective_chat.id)
-    )
-
-
-async def get_done_tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    done_tasks = load_user(update.effective_chat.id).get("done", {})
-    if not done_tasks:
-        await update.message.reply_text("No done tasks.")
+def cmd_add(user_id, args, respond):
+    if not args:
+        respond("Please describe your task, e.g. `/todo add finish report by friday 5pm`")
         return
 
-    lines = ["Done tasks:"]
-    for path, task in done_tasks.items():
-        lines.append(f"Task: {path}\nDetails: {task['Todo']}\n")
-    await update.message.reply_text("\n".join(lines))
-
-
-async def get_expired_tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    expired = load_user(update.effective_chat.id).get("expired", {})
-    if not expired:
-        await update.message.reply_text("No expired tasks.")
+    try:
+        task_data = add_task(args, user_id)
+    except Exception as error:  # LLM/JSON/validation problems
+        respond(f"Sorry, I couldn't add that task: {error}")
         return
 
-    lines = ["Expired tasks:"]
-    for path, task in expired.items():
+    respond(f"Done! Added task with title '{task_data.Title}'")
+
+
+def cmd_categories(user_id, args, respond):
+    respond(f"Available categories: {load_user(user_id)['all_keys']}")
+
+
+def cmd_get(user_id, args, respond):
+    show(respond, "Choose an option:", main_menu_buttons(user_id))
+
+
+def format_task_archive(heading, tasks):
+    lines = [heading]
+    for path, task in tasks.items():
         lines.append(f"Task: {path}\nDetails: {task['Todo']}\n")
-    await update.message.reply_text("\n".join(lines))
+    return "\n".join(lines)
 
 
-async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = load_user(update.effective_chat.id)
-    tasks = find_tasks(user["todolist"])
+def cmd_get_done(user_id, args, respond):
+    done = load_user(user_id).get("done", {})
+    respond(format_task_archive("*Done tasks:*", done) if done else "No done tasks.")
+
+
+def cmd_expired(user_id, args, respond):
+    expired = load_user(user_id).get("expired", {})
+    respond(format_task_archive("*Expired tasks:*", expired) if expired else "No expired tasks.")
+
+
+def cmd_delete(user_id, args, respond):
+    tasks = find_tasks(load_user(user_id)["todolist"])
     if not tasks:
-        await update.message.reply_text("No tasks available to delete.")
+        respond("No tasks available to delete.")
         return
 
-    keyboard = [
-        [InlineKeyboardButton(f"{split_path(path)[1]}: {task['Todo']}", callback_data=f"delete_{path}")]
+    buttons = [
+        button(f"{split_path(path)[1]}: {task['Todo']}", f"delete:{path}", path)
         for path, task in tasks
     ]
-    keyboard.append([InlineKeyboardButton("Delete All", callback_data="delete_all")])
-    await update.message.reply_text("Select a task to delete:", reply_markup=InlineKeyboardMarkup(keyboard))
+    buttons.append(button("Delete All", "delete_all"))
+    show(respond, "Select a task to delete:", buttons)
 
 
-# --- /add conversation ------------------------------------------------------
-
-async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Please provide the details for your new task or if you want to leave use /leave."
-    )
-    return ADD_TASK_STATE
-
-
-async def leave_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("You have left the conversation.")
-    return ConversationHandler.END
+SUBCOMMANDS = {
+    "help": cmd_help,
+    "add": cmd_add,
+    "categories": cmd_categories,
+    "get": cmd_get,
+    "get_done": cmd_get_done,
+    "expired": cmd_expired,
+    "delete": cmd_delete,
+}
 
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    task_data = add_task(update.message.text, update.effective_chat.id)
-    await update.message.reply_text(f"Done! Added task with title '{task_data.Title}'")
+@app.command("/todo")
+def handle_todo_command(ack, command, respond):
+    ack()  # Slack requires an acknowledgement within 3 seconds
+
+    name, _, args = command["text"].strip().partition(" ")
+    handler = SUBCOMMANDS.get(name.lower() or "help")
+    if handler is None:
+        respond(f"Unknown command `{name}`.\n{HELP_TEXT}")
+        return
+
+    handler(command["user_id"], args.strip(), respond)
 
 
 # ---------------------------------------------------------------------------
-# Button (callback query) handlers
+# Button click handlers
 # ---------------------------------------------------------------------------
 
-async def show_main_menu(query, user_id):
-    await query.edit_message_text(text="Choose an option:", reply_markup=main_menu(user_id))
+@app.action("return")
+def on_return(ack, body, respond):
+    ack()
+    show(respond, "Choose an option:", main_menu_buttons(body["user"]["id"]))
 
 
-async def delete_from_button(query, user_id, target):
-    user = load_user(user_id)
-
-    if target == "all":
-        user["todolist"] = {}
-        text = "All tasks have been deleted."
-    else:
-        title = split_path(target)[1]
-        removed = pop_task(user["todolist"], target)
-        text = f"Task '{title}' has been deleted." if removed else f"Task '{title}' not found."
-
-    save_user(user_id, user)
-    await query.edit_message_text(text=text)
-
-
-async def mark_done_from_button(query, user_id, path):
-    user = load_user(user_id)
-    task = pop_task(user["todolist"], path)
-
-    if task is None:
-        text = f"Task not found: {split_path(path)[1]}"
-    else:
-        user["done"][path] = task
-        save_user(user_id, user)
-        text = f"Task marked as done: {split_path(path)[1]}"
-
-    await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(navigation_buttons()))
-
-
-async def show_upcoming_task(query, user_id):
-    keyboard = navigation_buttons()
-    user = load_user(user_id)
+@app.action("upcoming")
+def on_upcoming(ack, body, respond):
+    ack()
+    user = load_user(body["user"]["id"])
 
     # Only consider tasks that haven't passed yet.
     upcoming = [
@@ -362,58 +367,83 @@ async def show_upcoming_task(query, user_id):
         if hours_remaining(task) >= 0
     ]
     if not upcoming:
-        await query.edit_message_text(
-            text="No tasks available.", reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        show(respond, "No tasks available.", navigation_buttons())
         return
 
     path, task = min(upcoming, key=lambda item: hours_remaining(item[1]))
-    keyboard.append([InlineKeyboardButton("Mark as done", callback_data=f"done_task{path}")])
-    await query.edit_message_text(
-        text=format_task(split_path(path)[1], task),
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    buttons = navigation_buttons() + [button("Mark as done", f"done_task:{path}", path)]
+    show(respond, format_task(split_path(path)[1], task), buttons)
 
 
-async def show_task_or_category(query, user_id, path):
-    keyboard = navigation_buttons()
+@app.action(re.compile(r"^get_task:"))
+def on_get_task(ack, body, action, respond):
+    ack()
+    user_id = body["user"]["id"]
+    path = action["value"]
     node = get_node(load_user(user_id)["todolist"], path)
 
+    buttons = navigation_buttons()
     if "Todo" in node:  # it's a task
         text = format_task(split_path(path)[1], node)
-        keyboard.append([InlineKeyboardButton("Mark as done", callback_data=f"done_task{path}")])
+        buttons.append(button("Mark as done", f"done_task:{path}", path))
     else:  # it's a category
-        text = f"Selected category: {path}"
-        keyboard.extend(category_buttons(path, user_id))
+        text = f"*Selected category:* {path}"
+        buttons.extend(category_buttons(path, user_id))
 
-    await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+    show(respond, text, buttons)
 
 
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Route every inline-button press to the right handler by its prefix."""
-    query = update.callback_query
-    await query.answer()
+@app.action(re.compile(r"^done_task:"))
+def on_done_task(ack, body, action, respond):
+    ack()
+    user_id = body["user"]["id"]
+    path = action["value"]
 
-    user_id = update.effective_chat.id
-    data = query.data
+    user = load_user(user_id)
+    task = pop_task(user["todolist"], path)
+    title = split_path(path)[1]
 
-    if data == "return":
-        await show_main_menu(query, user_id)
-    elif data.startswith("delete_"):
-        await delete_from_button(query, user_id, data[len("delete_"):])
-    elif data.startswith("done_task"):
-        await mark_done_from_button(query, user_id, data[len("done_task"):])
-    elif data == "get_task_latest":
-        await show_upcoming_task(query, user_id)
-    elif data.startswith("get_task_"):
-        await show_task_or_category(query, user_id, data[len("get_task_"):])
+    if task is None:
+        text = f"Task not found: {title}"
+    else:
+        user["done"][path] = task
+        save_user(user_id, user)
+        text = f"Task marked as done: {title}"
+
+    show(respond, text, navigation_buttons())
+
+
+@app.action(re.compile(r"^delete:"))
+def on_delete_task(ack, body, action, respond):
+    ack()
+    user_id = body["user"]["id"]
+    path = action["value"]
+
+    user = load_user(user_id)
+    removed = pop_task(user["todolist"], path)
+    title = split_path(path)[1]
+    save_user(user_id, user)
+
+    show(respond, f"Task '{title}' has been deleted." if removed else f"Task '{title}' not found.")
+
+
+@app.action("delete_all")
+def on_delete_all(ack, body, respond):
+    ack()
+    user_id = body["user"]["id"]
+
+    user = load_user(user_id)
+    user["todolist"] = {}
+    save_user(user_id, user)
+
+    show(respond, "All tasks have been deleted.")
 
 
 # ---------------------------------------------------------------------------
 # Background job: move overdue tasks to "expired" and notify the user
 # ---------------------------------------------------------------------------
 
-async def check_expired_tasks(context: ContextTypes.DEFAULT_TYPE):
+def check_expired_tasks():
     for user_id in get_all_user_ids():
         user = load_user(user_id)
         changed = False
@@ -426,13 +456,24 @@ async def check_expired_tasks(context: ContextTypes.DEFAULT_TYPE):
             user["expired"][path] = pop_task(user["todolist"], path)
             changed = True
 
-            await context.application.bot.send_message(
-                chat_id=user_id,
+            # Posting to a user ID sends a DM from the bot.
+            app.client.chat_postMessage(
+                channel=user_id,
                 text=f"The task '{split_path(path)[1]}' has expired!",
             )
 
         if changed:
             save_user(user_id, user)
+
+
+def expiry_loop():
+    time.sleep(10)
+    while True:
+        try:
+            check_expired_tasks()
+        except Exception as error:  # keep the thread alive no matter what
+            print(f"Expiry check failed: {error}")
+        time.sleep(EXPIRY_CHECK_INTERVAL_SECONDS)
 
 
 # ---------------------------------------------------------------------------
@@ -441,28 +482,10 @@ async def check_expired_tasks(context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     print("Starting bot...")
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    app.job_queue.run_repeating(check_expired_tasks, interval=EXPIRY_CHECK_INTERVAL_SECONDS, first=10)
-
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("categories", categories_command))
-    app.add_handler(CommandHandler("get", get_task_command))
-    app.add_handler(CommandHandler("get_done", get_done_tasks_command))
-    app.add_handler(CommandHandler("expire", get_expired_tasks_command))
-    app.add_handler(CommandHandler("delete", delete_command))
-    app.add_handler(CallbackQueryHandler(button_click))
-    app.add_handler(
-        ConversationHandler(
-            entry_points=[CommandHandler("add", add_command)],
-            states={ADD_TASK_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)]},
-            fallbacks=[CommandHandler("leave", leave_command)],
-        )
-    )
+    threading.Thread(target=expiry_loop, daemon=True).start()
 
     print("Running!~")
-    app.run_polling()
+    SocketModeHandler(app, SLACK_APP_TOKEN).start()
 
 
 if __name__ == "__main__":
