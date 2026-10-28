@@ -5,7 +5,7 @@ A bot that helps you structure your tasks with AI!~
 ![alt text](image.png)
 ![alt text](image-1.png)
 
-It's my ~~first python~~ First Slack AI bot!(huh? Telegram? I don't know what you're talking about) And also my second slack bot too!~ It's a pretty cool little bot that you (yes YOU!!!) can try out here:
+It's my ~~first telegram~~ First Slack AI bot!(huh? Telegram? I don't know what you're talking about) And also my second slack bot too!~ It's a pretty cool little bot that you (yes YOU!!!) can try out here:
 
 https://app.slack.com/client/E09V59WQY1E/C0P5NE354 (if you are a hack clubber)
 OR install it 
