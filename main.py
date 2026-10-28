@@ -333,7 +333,7 @@ SUBCOMMANDS = {
 }
 
 
-@app.command("/todo")
+@app.command("/tyotodo")
 def handle_todo_command(ack, command, respond):
     ack()  # Slack requires an acknowledgement within 3 seconds
 
