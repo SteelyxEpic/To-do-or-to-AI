@@ -26,7 +26,7 @@ The current commands are:
 
 /tyo-categories - to see all the current categories and subcategories available
 
-/tyo-expire - to see all expired tasks!~
+/tyo-expired - to see all expired tasks!~
 
 /tyo-help - to see the commands you can do! (well if you are reading this then you would already know the commands tho :p)
 
