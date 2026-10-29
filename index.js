@@ -23,11 +23,11 @@ const HELP_TEXT = `Available Commands:
 /tyo-add <task> - Add a task (e.g. /tyo-add finish report by friday 5pm)
 /tyo-get - Browse your tasks
 /tyo-categories - See all categories
-/tyo-expired - See expired tasks
+/tyo-expire - See expired tasks
 /tyo-get-done - See done tasks
 /tyo-delete - Delete tasks
 /tyo-help - Show available commands
-`;
+`; 
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -63,7 +63,7 @@ function getAllUserIds() {
     .map((name) => name.slice(0, -".json".length));
 }
 
-
+ 
 // ---------------------------------------------------------------------------
 // Task tree helpers
 // ---------------------------------------------------------------------------
@@ -318,7 +318,7 @@ app.command("/tyo-get-done", async ({ command, ack, respond }) => {
   });
 });
 
-app.command("/tyo-expired", async ({ command, ack, respond }) => {
+app.command("/tyo-expire", async ({ command, ack, respond }) => {
   await ack();
   const expired = loadUser(command.user_id).expired ?? {};
   await respond({
